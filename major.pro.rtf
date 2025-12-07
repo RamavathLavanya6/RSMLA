@@ -1,0 +1,182 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2580
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 AppleColorEmoji;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 import numpy as np\
+import pandas as pd\
+import tkinter as tk\
+from tkinter import ttk, messagebox\
+from sklearn.model_selection import train_test_split, GridSearchCV\
+from sklearn.preprocessing import StandardScaler, OneHotEncoder\
+from sklearn.compose import ColumnTransformer\
+from sklearn.pipeline import Pipeline\
+from xgboost import XGBClassifier\
+import joblib\
+import os\
+\
+# -----------------------------\
+# 1. Generate Synthetic Dataset\
+# -----------------------------\
+def generate_synthetic_dataset(n=8000):\
+    np.random.seed(42)\
+    df = pd.DataFrame(\{\
+        "age": np.random.randint(21, 65, n),\
+        "income": np.random.randint(20000, 200000, n),\
+        "loan_amount": np.random.randint(3000, 60000, n),\
+        "credit_score": np.random.randint(300, 900, n),\
+        "employment_years": np.random.randint(0, 35, n),\
+        "loan_purpose": np.random.choice(["Business", "Personal", "Education", "Medical"], n),\
+        "city": np.random.choice(["Hyderabad", "Mumbai", "Chennai", "Delhi"], n),\
+    \})\
+\
+    # Feature Engineering\
+    df["DTI"] = df["loan_amount"] / df["income"]       # Debt-to-Income Ratio\
+    df["loan_credit_ratio"] = df["loan_amount"] / (df["credit_score"] + 1)\
+\
+    # Risk formula\
+    risk = (\
+        (df["credit_score"] < 580).astype(int) +\
+        (df["DTI"] > 0.4).astype(int) +\
+        (df["employment_years"] < 2).astype(int) +\
+        (df["loan_credit_ratio"] > 100).astype(int)\
+    )\
+    df["default"] = (risk >= 2).astype(int)\
+    return df\
+\
+# -----------------------------\
+# 2. Train or Load Model\
+# -----------------------------\
+def train_or_load_model():\
+    # Save model to Desktop to avoid PermissionError\
+    desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")\
+    model_file = os.path.join(desktop_path, "loan_risk_model.pkl")\
+    \
+    if os.path.exists(model_file):\
+        print(f"Loading saved model from \{model_file\}...")\
+        pipeline = joblib.load(model_file)\
+        return pipeline\
+\
+    print("Training new model...")\
+    df = generate_synthetic_dataset()\
+    X = df.drop("default", axis=1)\
+    y = df["default"]\
+\
+    X_train, _, y_train, _ = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)\
+\
+    numeric_features = ["age", "income", "loan_amount", "credit_score", "employment_years", "DTI", "loan_credit_ratio"]\
+    categorical_features = ["loan_purpose", "city"]\
+\
+    preprocessor = ColumnTransformer(\
+        transformers=[\
+            ("num", StandardScaler(), numeric_features),\
+            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features)\
+        ]\
+    )\
+\
+    pipeline = Pipeline([\
+        ("preprocess", preprocessor),\
+        ("model", XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42))\
+    ])\
+\
+    # Grid search for hyperparameter tuning\
+    param_grid = \{\
+        "model__n_estimators": [150, 250],\
+        "model__max_depth": [5, 8, 12],\
+        "model__learning_rate": [0.05, 0.1]\
+    \}\
+\
+    grid = GridSearchCV(pipeline, param_grid, cv=3, scoring="roc_auc", n_jobs=-1)\
+    grid.fit(X_train, y_train)\
+\
+    print("Best Parameters:", grid.best_params_)\
+\
+    # Save model to Desktop\
+    joblib.dump(grid.best_estimator_, model_file)\
+    print(f"Model saved as '\{model_file\}'")\
+\
+    return grid.best_estimator_\
+\
+# -----------------------------\
+# 3. Tkinter GUI\
+# -----------------------------\
+model = train_or_load_model()\
+\
+def predict():\
+    try:\
+        age = int(age_entry.get())\
+        income = int(income_entry.get())\
+        loan_amount = int(loan_entry.get())\
+        credit_score = int(credit_entry.get())\
+        employment_years = int(work_entry.get())\
+        loan_purpose = purpose_combo.get()\
+        city = city_combo.get()\
+\
+        DTI = loan_amount / income\
+        loan_credit_ratio = loan_amount / (credit_score + 1)\
+\
+        user_df = pd.DataFrame(\{\
+            "age": [age],\
+            "income": [income],\
+            "loan_amount": [loan_amount],\
+            "credit_score": [credit_score],\
+            "employment_years": [employment_years],\
+            "loan_purpose": [loan_purpose],\
+            "city": [city],\
+            "DTI": [DTI],\
+            "loan_credit_ratio": [loan_credit_ratio]\
+        \})\
+\
+        prob = model.predict_proba(user_df)[0][1]\
+        pred = model.predict(user_df)[0]\
+\
+        result = "
+\f1 \uc0\u10060 
+\f0  HIGH RISK \'97 Loan Not Approved" if pred==1 else "
+\f1 \uc0\u9989 
+\f0  LOW RISK \'97 Loan Approved"\
+        messagebox.showinfo("Prediction Result", f"\{result\}\\nRisk Score: \{prob:.3f\}")\
+\
+    except Exception as e:\
+        messagebox.showerror("Error", f"Invalid Input! \{e\}")\
+\
+# -----------------------------\
+# 4. Tkinter UI\
+# -----------------------------\
+root = tk.Tk()\
+root.title("AI Loan Risk Predictor (FinTech)")\
+root.geometry("450x550")\
+root.resizable(False, False)\
+\
+title = tk.Label(root, text="AI Loan Approval Prediction", font=("Arial", 18, "bold"))\
+title.pack(pady=10)\
+\
+frame = tk.Frame(root)\
+frame.pack(pady=10)\
+\
+def add_row(label, row):\
+    tk.Label(frame, text=label).grid(row=row, column=0, pady=5)\
+    entry = tk.Entry(frame)\
+    entry.grid(row=row, column=1)\
+    return entry\
+\
+age_entry = add_row("Age",0)\
+income_entry = add_row("Income",1)\
+loan_entry = add_row("Loan Amount",2)\
+credit_entry = add_row("Credit Score",3)\
+work_entry = add_row("Employment Years",4)\
+\
+tk.Label(frame,text="Loan Purpose").grid(row=5,column=0,pady=5)\
+purpose_combo = ttk.Combobox(frame,values=["Business","Personal","Education","Medical"])\
+purpose_combo.grid(row=5,column=1)\
+\
+tk.Label(frame,text="City").grid(row=6,column=0,pady=5)\
+city_combo = ttk.Combobox(frame,values=["Hyderabad","Mumbai","Chennai","Delhi"])\
+city_combo.grid(row=6,column=1)\
+\
+predict_btn = tk.Button(root,text="Predict Loan Risk",command=predict,font=("Arial",14),bg="#008060",fg="white")\
+predict_btn.pack(pady=20)\
+\
+root.mainloop()}
